@@ -4,12 +4,23 @@ import {
   WalletMultiButton,
 } from "@solana/wallet-adapter-react-ui";
 import { useEffect, useState } from "react";
-import { Keypair, sendAndConfirmTransaction, SystemProgram, Transaction } from "@solana/web3.js";
-import { createInitializeMint2Instruction, getMinimumBalanceForRentExemptMint, MINT_SIZE, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
+import { Keypair, SystemProgram, Transaction } from "@solana/web3.js";
+import {
+  createInitializeMetadataPointerInstruction,
+  createInitializeMint2Instruction,
+  createInitializeMintInstruction,
+  ExtensionType,
+  getMinimumBalanceForRentExemptMint,
+  getMintLen,
+  LENGTH_SIZE,
+  TOKEN_2022_PROGRAM_ID,
+  TYPE_SIZE,
+} from "@solana/spl-token";
+import { createInitializeInstruction, pack } from "@solana/spl-token-metadata";
 
 function LaunchPad() {
   const wallet = useWallet();
-  const {connection} = useConnection();
+  const { connection } = useConnection();
 
   const [connected, setConnected] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(false);
@@ -18,28 +29,61 @@ function LaunchPad() {
   }, [wallet]);
 
   const createToken = async () => {
-    const lamports = await getMinimumBalanceForRentExemptMint(connection);
     const keypair = Keypair.generate();
 
+    const metadata = {
+      mint: keypair.publicKey,
+      name: "Token x",
+      symbol: "Token x",
+      uri: "https://cdn.100xdevs.com/metadata.json",
+      additionalMetadata: [],
+    };
+
+    const mintLen = getMintLen([ExtensionType.MetadataPointer]);
+    const metadataLen = TYPE_SIZE + LENGTH_SIZE + pack(metadata).length;
+
+    const lamports = await connection.getMinimumBalanceForRentExemption(
+      mintLen + metadataLen
+    );
+
     const transaction = new Transaction().add(
-        SystemProgram.createAccount({
-            fromPubkey: wallet.publicKey!,
-            newAccountPubkey: keypair.publicKey,
-            space: MINT_SIZE,
-            lamports,
-            programId: TOKEN_2022_PROGRAM_ID,
-        }),
-        createInitializeMint2Instruction(keypair.publicKey, 9, wallet.publicKey! , wallet.publicKey , TOKEN_2022_PROGRAM_ID ),
+
+      SystemProgram.createAccount({
+        fromPubkey: wallet.publicKey!,
+        newAccountPubkey: keypair.publicKey,
+        space: mintLen,
+        lamports,
+        programId: TOKEN_2022_PROGRAM_ID,
+      }),
+
+      createInitializeMetadataPointerInstruction(keypair.publicKey,wallet.publicKey,keypair.publicKey,TOKEN_2022_PROGRAM_ID),
+
+      createInitializeMintInstruction(keypair.publicKey,9,wallet.publicKey!,null,TOKEN_2022_PROGRAM_ID),
+
+      createInitializeInstruction({
+        programId: TOKEN_2022_PROGRAM_ID,
+        mint: keypair.publicKey,
+        metadata: keypair.publicKey,
+        name: metadata.name,
+        symbol: metadata.symbol,
+        uri: metadata.uri,
+        mintAuthority: wallet.publicKey!,
+        updateAuthority: wallet.publicKey!,
+      })
     );
 
     transaction.feePayer = wallet.publicKey!;
     transaction.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
-    transaction.partialSign(keypair)
+
+    transaction.partialSign(keypair);
+
+    const transactionn = await wallet.sendTransaction(transaction, connection);
     
-    const transactionn = await wallet.sendTransaction(transaction,connection);
-    console.log(transactionn)
+    console.log(transactionn);
     console.log(`Token mint created at ${keypair.publicKey.toBase58()}`);
-    window.alert(JSON.stringify({transactionid:transactionn,mint:keypair.publicKey}));
+    window.alert(
+      JSON.stringify({ transactionid: transactionn, mint: keypair.publicKey })
+    );
   };
 
   return (
